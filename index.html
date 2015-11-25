@@ -1,5 +1,6 @@
 <script src='bundle.js'></script>
 <script src="http://d3js.org/d3.v3.min.js"></script>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.3/jquery.min.js"></script>
 <html>
 <style>
     .node circle {
@@ -38,11 +39,40 @@
             displayQueryTree([treeData], "Initial Query Tree:");
         } else {
             for (tree in treeData){
-                displayQueryTree([treeData[tree]], "Initial Query Trees:");
+                if (tree == 0){
+                    displayQueryTree([treeData[tree]], "Initial Query Trees:");
+                } else {
+                    displayQueryTree([treeData[tree]], "");
+                }
+                
             }
         }
-        
-        
+        treeData = moveSelectDown(treeData);
+        displayQueryTree([treeData], "After moving SELECT operations down the tree:");
+    }
+    
+    function moveSelectDown(treeData){
+        console.log(getRootTables(treeData));
+    }
+    
+    
+    function getRootTables(treeData){
+        var tables = [];
+        if(treeData.type == "table"){
+            var table = {
+                "as": treeData.as,
+                "table": treeData.table
+            }
+            return [table];
+        } else {
+            for(key in treeData.children){
+                var temp = getRootTables(treeData.children[key]);
+                for(i in temp){
+                    tables.push(temp[i]);
+                }
+            }
+        }
+        return tables;
     }
     
     function treeDataWrapper(input){
@@ -269,15 +299,18 @@
         } else if (from.length == 2) {
             tableTree = {
                 "name": "X",
+                "type": "cartesianProduct",
                 "children": [
                     {
                         "name": from[0].table + (from[0].as ? ' ' + from[0].as : ""),
                         "as": from[0].as,
+                        "table": from[0].table,
                         "type": "table"
                     },
                     {
                         "name": from[1].table + (from[1].as ? ' ' + from[1].as : ""),
                         "as": from[1].as,
+                        "table": from[1].table,
                         "type": "table"
                     }
                 ]
@@ -285,15 +318,18 @@
         } else {
             var leaves = {
                 "name": "X",
+                "type": "cartesianProduct",
                 "children": [
                     {
                         "name": from[0].table + (from[0].as ? ' ' + from[0].as : ""),
                         "as": from[0].as,
+                        "table": from[0].table,
                         "type": "table"
                     },
                     {
                         "name": from[1].table + (from[1].as ? ' ' + from[1].as : ""),
                         "as": from[1].as,
+                        "table": from[1].table,
                         "type": "table"
                     }
                 ]
@@ -301,10 +337,12 @@
             for (var j=2; j<from.length; j++){
                 leaves = {
                     "name": "X",
+                    "type": "cartesianProduct",
                     "children": [
                         {
                             "name": from[j].table + (from[j].as ? ' ' + from[j].as : ""),
                             "as": from[j].as,
+                            "table": from[j].table,
                             "type": "table"
                         },
                         leaves
@@ -457,7 +495,9 @@
     
     function displayQueryTree(treeData, message){
         console.log(treeData);
-        document.getElementById("queryTreeContainer").innerHTML = message;
+        if (message != ""){
+            $("#queryTreeContainer").append('<h2>' + message + '</h2>');
+        }
         var margin = {top: 40, right: 120, bottom: 20, left: 120},
             width = 960 - margin.right - margin.left,
             height = 700 - margin.top - margin.bottom;
