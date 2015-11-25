@@ -1,0 +1,512 @@
+<script src='bundle.js'></script>
+<script src="http://d3js.org/d3.v3.min.js"></script>
+<html>
+<style>
+    .node circle {
+      fill: #fff;
+      stroke: steelblue;
+      stroke-width: 3px;
+    }
+    .node text { font: 12px sans-serif; }
+    .link {
+      fill: none;
+      stroke: #ccc;
+      stroke-width: 2px;
+    }
+</style>
+<body>
+    <h1>SQL COMPILER</h1>
+    <textarea rows="10" cols="80" id="inputSQL">Enter SQL Query here.</textarea>
+    <br>
+    <button id="parseSql">Compile</button>
+    <br>
+    <p id="relAlg">Relational Algebra will be output here.</p>
+    <div id="queryTreeContainer"></div>
+</body>
+</html>
+<script>
+    document.getElementById("parseSql").onclick=function(){
+        var input = document.getElementById("inputSQL").value
+        // replace unicode single quote with normal quotes
+        
+        input = input.replace(/[\u2019\u2018]/g,'"');
+        document.getElementById("relAlg").innerHTML = relAlgWrapper(input);
+        
+        var treeData = treeDataWrapper(input);
+        document.getElementById("queryTreeContainer").innerHTML = "";
+        if(treeData.length == undefined){
+            displayQueryTree([treeData], "Initial Query Tree:");
+        } else {
+            for (tree in treeData){
+                displayQueryTree([treeData[tree]], "Initial Query Trees:");
+            }
+        }
+        
+        
+    }
+    
+    function treeDataWrapper(input){
+        var querys = [];
+        var setOperator = null;
+        var retTree;
+        
+        if (input.search("UNION") != -1) {
+            querys = input.split("UNION");
+            setOperator = "UNION";
+        } else if (input.search("INTERSECT") != -1) {
+            querys = input.split("INTERSECT");
+            setOperator = "INTERSECT";
+        } else if (input.search("EXCEPT") != -1) {
+            querys = input.split("EXCEPT");
+            setOperator = "EXCEPT";
+        }
+        
+        if (setOperator == null){
+            try {
+                var ast = getAst(input);
+            }catch(err){return "ERROR: " + err.message;}
+            retTree = getTreeData(ast);
+        } else {
+            querys[1] = querys[1].substr(1, querys[1].length)
+            try {
+                var ast1 = getAst(querys[0]);
+                var ast2 = getAst(querys[1]);
+            }catch(err){return "ERROR: " + err.message;}
+            
+            if (setOperator == "UNION"){
+                retTree = {
+                    "name": "UNION",
+                    "type": "setOperator",
+                    "children": [getTreeData(ast1),getTreeData(ast2)]
+                }
+            } else if (setOperator == "INTERSECT"){
+                retTree = {
+                    "name": "INTERSECTION",
+                    "type": "setOperator",
+                    "children": [getTreeData(ast1),getTreeData(ast2)]
+                }
+            } else if (setOperator == "EXCEPT"){
+                retTree = {
+                    "name": "SET DIFFERENCE",
+                    "type": "setOperator",
+                    "children": [getTreeData(ast1),getTreeData(ast2)]
+                }
+            }
+        }
+        
+        return retTree;
+    }
+    
+    function getTreeData(ast){
+        console.log(ast);
+        var tables = treeTables(ast.from);
+        var groupBy = treeGroup(ast.groupby);
+        var having = treeHaving(ast.having);
+        var where = treeWhere(ast.where);
+        var project = treeProject(ast.columns);
+        var subquery = getSubquery(ast.where);
+        
+        if (subquery == null){
+            var treeData = tables;
+            if (groupBy != null){
+                groupBy.children = [treeData];
+                treeData = groupBy;
+            }
+            if (having != null){
+                having.children = [treeData];
+                treeData = having;
+            }
+            if (where != null){
+                where.children = [treeData];
+                treeData = where;
+            }
+            if (project != null){
+                project.children = [treeData];
+                treeData = project;
+            }
+        } else {
+            var subqueryTree = getTreeData(subquery.ast);
+            if (subquery.operator == "IN"){
+                //TODO: get parameters for natural join here
+                var join = {
+                    "name": "NATURAL JOIN",
+                    "type": "join",
+                }
+                join.children = [tables, subqueryTree[0]];
+                var treeData = project;
+                treeData.children = [join];
+            } else if (subquery.operator == "NOT EXISTS"){
+                //TODO: check to make sure all tables referenced in where clause are lower in tree
+                var difference = {
+                    "name": "SET DIFFERENCE",
+                    "type": "setOperator"
+                }
+                difference.children = [tables, subqueryTree];
+                var treeData = project;
+                treeData.children = [difference];
+            } else if (subquery.operator == '>' || subquery.operator == '<') {
+                var treeData = []
+                console.log(subqueryTree);
+                subqueryTree.name = "COMPARATOR <-- " + RAproject(subqueryTree.project);
+                treeData[0] = subqueryTree;
+                var topLevelTree = {
+                    "name": "SELECT (" + subquery.lhs + ' ' + subquery.operator + ' COMPARATOR)',
+                    "type": "comparison"
+                }
+                topLevelTree.children = [tables];
+                project.children = [topLevelTree];
+                treeData[1] = project;
+            }
+            
+        }
+        return treeData;
+    }
+    
+    function relAlgWrapper(input){
+        var querys = [];
+        var setOperator = null;
+        var retStr = "";
+        
+        if (input.search("UNION") != -1) {
+            querys = input.split("UNION");
+            setOperator = "UNION";
+        } else if (input.search("INTERSECT") != -1) {
+            querys = input.split("INTERSECT");
+            setOperator = "INTERSECT";
+        } else if (input.search("EXCEPT") != -1) {
+            querys = input.split("EXCEPT");
+            setOperator = "EXCEPT";
+        }
+
+        if (setOperator == null){
+            try {
+                var ast = getAst(input);
+            }catch(err){return "ERROR: " + err.message;}
+            
+            retStr = buildRelAlg(ast);
+        } else {
+            querys[1] = querys[1].substr(1, querys[1].length)
+            try {
+                var ast1 = getAst(querys[0]);
+                var ast2 = getAst(querys[1]);
+            }catch(err){return "ERROR: " + err.message;}
+            
+            if (setOperator == "UNION"){
+                retStr = '(' + buildRelAlg(ast1) + ') &#8746 (' + buildRelAlg(ast2) + ')';
+            } else if (setOperator == "INTERSECT"){
+                retStr = '(' + buildRelAlg(ast1) + ') &#8745 (' + buildRelAlg(ast2) + ')';
+            } else if (setOperator == "EXCEPT"){
+                retStr = '(' + buildRelAlg(ast1) + ') - (' + buildRelAlg(ast2) + ')';
+            }
+        }
+        return retStr;
+    }
+    
+    function buildRelAlg(ast){
+        var tables = RAtables(ast.from);
+        var project = RAproject(ast.columns);
+        var groupby = RAgroup(ast.groupby);
+        var having = ""
+        if (ast.having != null){having = RAhaving(ast.having)};
+        var where = ""
+        var subquery = getSubquery(ast.where);
+        if (subquery == null){
+            if (ast.where != null){where = RAwhere(ast.where)};
+            var retStr = tables;
+            if (groupby != ""){retStr = "&#947 <sub>" + groupby + '</sub>'+ retStr}
+            if (having != ""){
+                if (retStr[0] == '('){retStr = "&#963 <sub>" + having + '</sub>'+ retStr;}
+                else {retStr = "&#963 <sub>" + having + '</sub>('+ retStr + ')';}
+            }
+            if (where != ""){
+                if (retStr[0] == '('){retStr = "&#963 <sub>" + where + '</sub>'+ retStr;}
+                else {retStr = "&#963 <sub>" + where + '</sub>('+ retStr + ')';}
+            }
+            if (project != '*'){
+                if (retStr[0] == '('){retStr = "&#928 <sub>" + project + '</sub>'+ retStr;}
+                else {retStr = "&#928 <sub>" + project + '</sub>('+ retStr + ')';}
+            }
+        } else { //now deal with the sub query
+            var SubQueryRelAlg = buildRelAlg(subquery.ast);
+            if (subquery.operator == "IN"){
+                var retStr = '&#10781(' + SubQueryRelAlg +')';
+                retStr = tables + retStr;
+                retStr = "&#928 <sub>" + project + '</sub>(' + retStr + ')'
+            } else if (subquery.operator == "NOT EXISTS") {
+                retStr = "(&#928 <sub>" + project + '</sub>'+ tables + ')';
+                retStr = retStr + ' - (' + SubQueryRelAlg + ')';
+            } else if (subquery.operator == '>' || subquery.operator == '<'){
+                retStr = "COMPARATOR <--- " + SubQueryRelAlg + '<br>'
+                retStr += "&#928 <sub>" + project + "</sub>(&#963 <sub>" + subquery.lhs + ' ' + subquery.operator + ' COMPARATOR</sub>' + tables + ')';
+            }
+        }
+        return retStr;
+    }
+    
+    function RAtables(from){
+        var retStr = ""
+        for (key in from){
+            if (key == 0){
+                retStr = from[key].table;
+                if (from[key].as != null){retStr += ' ' + from[key].as;}
+            } else {
+                retStr = '(' + retStr + ' X ' + from[key].table;
+                if (from[key].as != null){retStr += ' ' + from[key].as;}
+                retStr += ')'
+            }
+        }
+        if (retStr[0] != '('){retStr = '(' + retStr + ')';}
+        return retStr;
+    }
+    
+    function treeTables(from){
+        if(from.length == 1){
+            tableTree = {
+                "name": from[0].table + ' ' + from[0].as,
+                "as": from[0].as,
+                "type": "table"
+            }
+        } else if (from.length == 2) {
+            tableTree = {
+                "name": "X",
+                "children": [
+                    {
+                        "name": from[0].table + (from[0].as ? ' ' + from[0].as : ""),
+                        "as": from[0].as,
+                        "type": "table"
+                    },
+                    {
+                        "name": from[1].table + (from[1].as ? ' ' + from[1].as : ""),
+                        "as": from[1].as,
+                        "type": "table"
+                    }
+                ]
+            }
+        } else {
+            var leaves = {
+                "name": "X",
+                "children": [
+                    {
+                        "name": from[0].table + (from[0].as ? ' ' + from[0].as : ""),
+                        "as": from[0].as,
+                        "type": "table"
+                    },
+                    {
+                        "name": from[1].table + (from[1].as ? ' ' + from[1].as : ""),
+                        "as": from[1].as,
+                        "type": "table"
+                    }
+                ]
+            }
+            for (var j=2; j<from.length; j++){
+                leaves = {
+                    "name": "X",
+                    "children": [
+                        {
+                            "name": from[j].table + (from[j].as ? ' ' + from[j].as : ""),
+                            "as": from[j].as,
+                            "type": "table"
+                        },
+                        leaves
+                    ]
+                }
+            }
+            tableTree = leaves;
+        }
+        return tableTree;
+    }
+    
+    function RAproject(columns){
+        var retStr = "";
+        if (columns == '*'){
+            retStr = '*';
+        } else {
+            for (key in columns){
+                if (key != 0){ retStr += ', '; }
+                if (columns[key].expr.type == "column_ref"){
+                    if (columns[key].expr.table != null){
+                        retStr += columns[key].expr.table + '.';
+                    }
+                    retStr += columns[key].expr.column;
+                }
+                if (columns[key].expr.type == "aggr_func"){
+                    retStr += columns[key].expr.name + '(';
+                    if (columns[key].expr.args.expr.value != undefined){retStr += columns[key].expr.args.expr.value;}
+                    if (columns[key].expr.args.expr.column != undefined){
+                        if(columns[key].expr.args.expr.table != null){retStr += columns[key].expr.args.expr.table + '.';}
+                        retStr += columns[key].expr.args.expr.column;
+                    }
+                    retStr += ')'
+                }
+                if (columns[key].expr.type == "function"){
+                    var temp = columns[key].expr;
+                    retStr += temp.name + '(';
+                    if (temp.args.value[0].table != null) {retStr += temp.args.value[0].table + '.';}
+                    retStr += temp.args.value[0].column + ')'
+                }
+                if (columns[key].as != null){
+                    retStr += ' AS ' + columns[key].as;
+                }
+            }
+        }
+        return retStr;
+    }
+    
+    function treeProject(columns){
+        var temp = RAproject(columns);
+        if (temp == '*'){return null}
+        return {
+            "name": "PROJECT (" + temp + ')',
+            "type": "project",
+            "project": columns
+        }
+    }
+    
+    function RAgroup(groupby){
+        var retStr = ""
+        for(key in groupby){
+            if(key != 0){retStr += ', ';}
+            retStr += groupby[key].table + '.' + groupby[key].column;
+        }
+        return retStr;
+    }
+    
+    function treeGroup(groupby){
+        var temp = RAgroup(groupby)
+        if (temp != ""){
+            return {
+                "name": "GROUP BY (" + temp + ')', 
+                "type":"group"
+            }
+        }
+        return null;
+    }
+    
+    function RAhaving(having){
+        retStr = "";
+        if (having.left && having.right && having.operator){
+            retStr += RAhaving(having.left) + ' ' + having.operator + ' ' + RAhaving(having.right)
+        } else if (having.type == "column_ref") {
+            retStr = having.table + '.' + having.column;
+        } else if (having.type == "string") {
+            retStr = '"' + having.value + '"';
+        } else if (having.type == "number") {
+            retStr = having.value;
+        } else if (having.type == "aggr_func") {
+            retStr += having.name + '(' + having.args.expr.value + ')';
+        }
+        return retStr;
+    }
+    
+    function treeHaving(having){
+        if (having == null){return null;}
+        return {
+            "name": "SELECT (" + RAhaving(having) + ')',
+            "type": "having"
+        }
+    }
+    
+    function RAwhere(where){
+        retStr = ""
+        if (where.left && where.right && where.operator){
+            retStr = RAwhere(where.left) + ' ' + where.operator + ' ' + RAwhere(where.right)
+        } else if (where.type == "column_ref") {
+            if(where.table != null){retStr += where.table + '.';}
+            retStr += where.column;
+        } else if (where.type == "string") {
+            retStr = '"' + where.value + '"';
+        } else if (where.type == "number") {
+            retStr = where.value;
+        }
+        
+        return retStr;
+    }
+    
+    function treeWhere(where){
+        temp = RAwhere(where);
+        if (temp == ""){return null;}
+        return {
+            "name": "SELECT (" + temp + ')',
+            "type": "where",
+            "where": where
+        }
+    }
+    
+    //returns null if there is no sub query, else returns the LHS, operator, and subquery ast
+    function getSubquery(where){
+        var subquery = {operator:"", lhs:"", ast:null}
+        if(where.operator == "IN"){
+            subquery.operator = "IN";
+            if (where.left.table != null) {subquery.lhs += where.left.table + '.';}
+            subquery.lhs += where.left.column;
+            subquery.ast = where.right.value[0];
+        } else if (where.operator == "NOT EXISTS") {
+            subquery.operator = "NOT EXISTS";
+            subquery.ast = where.expr;
+            subquery.lhs = null;
+        } else if ((where.operator == ">" || where.operator == "<") && where.right.type == "select"){
+            subquery.operator = where.operator;
+            subquery.ast = where.right;
+            if(where.left.table != null){subquery.lhs += where.left.table + '.';}
+            subquery.lhs += where.left.column;
+        } else {
+            subquery = null;
+        }
+        return subquery;
+    }
+    
+    function displayQueryTree(treeData, message){
+        console.log(treeData);
+        document.getElementById("queryTreeContainer").innerHTML = message;
+        var margin = {top: 40, right: 120, bottom: 20, left: 120},
+            width = 960 - margin.right - margin.left,
+            height = 700 - margin.top - margin.bottom;
+            
+        var i = 0;
+        var tree = d3.layout.tree()
+            .size([height, width]);
+        var diagonal = d3.svg.diagonal()
+            .projection(function(d) { return [d.x, d.y]; });
+        var svg = d3.select("#queryTreeContainer").append("svg")
+            .attr("width", width + margin.right + margin.left)
+            .attr("height", height + margin.top + margin.bottom)
+          .append("g")
+            .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+        root = treeData[0];  
+        update(root);
+        
+        function update(source) {
+          // Compute the new tree layout.
+          var nodes = tree.nodes(root).reverse(),
+              links = tree.links(nodes);
+          // Normalize for fixed-depth.
+          nodes.forEach(function(d) { d.y = d.depth * 100; });
+          // Declare the nodes…
+          var node = svg.selectAll("g.node")
+              .data(nodes, function(d) { return d.id || (d.id = ++i); });
+          // Enter the nodes.
+          var nodeEnter = node.enter().append("g")
+              .attr("class", "node")
+              .attr("transform", function(d) { 
+                  return "translate(" + d.x + "," + d.y + ")"; });
+          nodeEnter.append("circle")
+              .attr("r", 10)
+              .style("fill", "#fff");
+          nodeEnter.append("text")
+              .attr("y", function(d) { 
+                  return d.children || d._children ? -18 : 18; })
+              .attr("dy", ".35em")
+              .attr("text-anchor", "middle")
+              .text(function(d) { return d.name; })
+              .style("fill-opacity", 1);
+          // Declare the links…
+          var link = svg.selectAll("path.link")
+              .data(links, function(d) { return d.target.id; });
+          // Enter the links.
+          link.enter().insert("path", "g")
+              .attr("class", "link")
+              .attr("d", diagonal);
+        }
+    }
+    
+</script>
