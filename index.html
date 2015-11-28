@@ -23,39 +23,125 @@
     <br>
     <p id="relAlg">Relational Algebra will be output here.</p>
     <div id="queryTreeContainer"></div>
+    <div id="optimizedTreeContainer"></div>
 </body>
 </html>
 <script>
     document.getElementById("parseSql").onclick=function(){
         var input = document.getElementById("inputSQL").value
         // replace unicode single quote with normal quotes
-        
+
         input = input.replace(/[\u2019\u2018]/g,'"');
         document.getElementById("relAlg").innerHTML = relAlgWrapper(input);
-        
+
         var treeData = treeDataWrapper(input);
         document.getElementById("queryTreeContainer").innerHTML = "";
         if(treeData.length == undefined){
-            displayQueryTree([treeData], "Initial Query Tree:");
+            //displayQueryTree([treeData], "#queryTreeContainer", "Initial Query Tree:");
         } else {
             for (tree in treeData){
                 if (tree == 0){
-                    displayQueryTree([treeData[tree]], "Initial Query Trees:");
+                    displayQueryTree([treeData[tree]], "#queryTreeContainer", "Initial Query Trees:");
                 } else {
-                    displayQueryTree([treeData[tree]], "");
+                    displayQueryTree([treeData[tree]], "#queryTreeContainer", "");
                 }
-                
+
             }
         }
         treeData = moveSelectDown(treeData);
-        displayQueryTree([treeData], "After moving SELECT operations down the tree:");
+        document.getElementById("queryTreeContainer").innerHTML = "";
+        displayQueryTree([treeData], "#optimizedTreeContainer", "After moving SELECT operations down the tree:");
     }
-    
+
     function moveSelectDown(treeData){
-        console.log(getRootTables(treeData));
+        if(treeData.type == undefined){
+            treeData[0] = moveSelectDown(treeData[0]);
+        } else if (treeData.type != "where"){
+            for(key in treeData.children){
+                treeData.children[key] = moveSelectDown(treeData.children[key])
+            }
+        } else {
+          var selects = splitWhere(treeData.where)
+          for (key in selects){
+            treeData.children[0] = moveSingleSelect(selects[key], treeData.children[0])
+          }
+
+        }
+        return treeData
     }
-    
-    
+
+    function moveSingleSelect(select, treeData){
+      if(treeData.children == undefined){
+        //insert select here
+        var newNode = {
+          "name": "SELECT(" + select.text + ')',
+          "type": "where",
+          "children": [treeData]
+        }
+        return newNode;
+      } else {
+        for(key in treeData.children){
+          var insertHere = true;
+          if(hasRootTables(select, getRootTables(treeData.children[key]))){
+            insertHere = false;
+            treeData.children[key] = moveSingleSelect(select, treeData.children[key]);
+            return treeData;
+          }
+        }
+        if (insertHere){
+          var newNode = {
+            "name": "SELECT(" + select.text + ')',
+            "type": "where",
+            "children": [treeData]
+          }
+          return newNode;
+        }
+      }
+    }
+
+    function hasRootTables(select, rootTables){
+      for (i in select.tables){
+        var temp = false;
+        for (j in rootTables){
+          if(select.tables[i] == rootTables[j].as || select.tables[i] == rootTables[j].table){
+            temp = true;
+          }
+        }
+        if(temp == false){
+          return false;
+        }
+      }
+      return true;
+    }
+
+    function splitWhere(where){
+      var selects = []
+      if (where.operator != "AND"){
+        var select = {
+          "text": RAwhere(where),
+          "tables": getTables(where)
+        }
+        return [select];
+      } else {
+        var tempLeft = splitWhere(where.left)
+        for (i in tempLeft){selects.push(tempLeft[i]);}
+        var tempRight = splitWhere(where.right)
+        for (i in tempRight){selects.push(tempRight[i]);}
+        return selects;
+      }
+    }
+
+    function getTables(where){
+      var tables = [];
+      if (where.left.table != undefined){
+        tables.push(where.left.table);
+      }
+      if (where.right.table != undefined){
+        tables.push(where.right.table);
+      }
+      return tables;
+    }
+
     function getRootTables(treeData){
         var tables = [];
         if(treeData.type == "table"){
@@ -74,12 +160,12 @@
         }
         return tables;
     }
-    
+
     function treeDataWrapper(input){
         var querys = [];
         var setOperator = null;
         var retTree;
-        
+
         if (input.search("UNION") != -1) {
             querys = input.split("UNION");
             setOperator = "UNION";
@@ -90,7 +176,7 @@
             querys = input.split("EXCEPT");
             setOperator = "EXCEPT";
         }
-        
+
         if (setOperator == null){
             try {
                 var ast = getAst(input);
@@ -102,7 +188,7 @@
                 var ast1 = getAst(querys[0]);
                 var ast2 = getAst(querys[1]);
             }catch(err){return "ERROR: " + err.message;}
-            
+
             if (setOperator == "UNION"){
                 retTree = {
                     "name": "UNION",
@@ -123,19 +209,18 @@
                 }
             }
         }
-        
+
         return retTree;
     }
-    
+
     function getTreeData(ast){
-        console.log(ast);
         var tables = treeTables(ast.from);
         var groupBy = treeGroup(ast.groupby);
         var having = treeHaving(ast.having);
         var where = treeWhere(ast.where);
         var project = treeProject(ast.columns);
         var subquery = getSubquery(ast.where);
-        
+
         if (subquery == null){
             var treeData = tables;
             if (groupBy != null){
@@ -176,7 +261,6 @@
                 treeData.children = [difference];
             } else if (subquery.operator == '>' || subquery.operator == '<') {
                 var treeData = []
-                console.log(subqueryTree);
                 subqueryTree.name = "COMPARATOR <-- " + RAproject(subqueryTree.project);
                 treeData[0] = subqueryTree;
                 var topLevelTree = {
@@ -187,16 +271,16 @@
                 project.children = [topLevelTree];
                 treeData[1] = project;
             }
-            
+
         }
         return treeData;
     }
-    
+
     function relAlgWrapper(input){
         var querys = [];
         var setOperator = null;
         var retStr = "";
-        
+
         if (input.search("UNION") != -1) {
             querys = input.split("UNION");
             setOperator = "UNION";
@@ -212,7 +296,7 @@
             try {
                 var ast = getAst(input);
             }catch(err){return "ERROR: " + err.message;}
-            
+
             retStr = buildRelAlg(ast);
         } else {
             querys[1] = querys[1].substr(1, querys[1].length)
@@ -220,7 +304,7 @@
                 var ast1 = getAst(querys[0]);
                 var ast2 = getAst(querys[1]);
             }catch(err){return "ERROR: " + err.message;}
-            
+
             if (setOperator == "UNION"){
                 retStr = '(' + buildRelAlg(ast1) + ') &#8746 (' + buildRelAlg(ast2) + ')';
             } else if (setOperator == "INTERSECT"){
@@ -231,7 +315,7 @@
         }
         return retStr;
     }
-    
+
     function buildRelAlg(ast){
         var tables = RAtables(ast.from);
         var project = RAproject(ast.columns);
@@ -272,7 +356,7 @@
         }
         return retStr;
     }
-    
+
     function RAtables(from){
         var retStr = ""
         for (key in from){
@@ -288,7 +372,7 @@
         if (retStr[0] != '('){retStr = '(' + retStr + ')';}
         return retStr;
     }
-    
+
     function treeTables(from){
         if(from.length == 1){
             tableTree = {
@@ -353,7 +437,7 @@
         }
         return tableTree;
     }
-    
+
     function RAproject(columns){
         var retStr = "";
         if (columns == '*'){
@@ -389,7 +473,7 @@
         }
         return retStr;
     }
-    
+
     function treeProject(columns){
         var temp = RAproject(columns);
         if (temp == '*'){return null}
@@ -399,7 +483,7 @@
             "project": columns
         }
     }
-    
+
     function RAgroup(groupby){
         var retStr = ""
         for(key in groupby){
@@ -408,18 +492,18 @@
         }
         return retStr;
     }
-    
+
     function treeGroup(groupby){
         var temp = RAgroup(groupby)
         if (temp != ""){
             return {
-                "name": "GROUP BY (" + temp + ')', 
+                "name": "GROUP BY (" + temp + ')',
                 "type":"group"
             }
         }
         return null;
     }
-    
+
     function RAhaving(having){
         retStr = "";
         if (having.left && having.right && having.operator){
@@ -435,7 +519,7 @@
         }
         return retStr;
     }
-    
+
     function treeHaving(having){
         if (having == null){return null;}
         return {
@@ -443,7 +527,7 @@
             "type": "having"
         }
     }
-    
+
     function RAwhere(where){
         retStr = ""
         if (where.left && where.right && where.operator){
@@ -456,10 +540,10 @@
         } else if (where.type == "number") {
             retStr = where.value;
         }
-        
+
         return retStr;
     }
-    
+
     function treeWhere(where){
         temp = RAwhere(where);
         if (temp == ""){return null;}
@@ -469,7 +553,7 @@
             "where": where
         }
     }
-    
+
     //returns null if there is no sub query, else returns the LHS, operator, and subquery ast
     function getSubquery(where){
         var subquery = {operator:"", lhs:"", ast:null}
@@ -492,29 +576,29 @@
         }
         return subquery;
     }
-    
-    function displayQueryTree(treeData, message){
+
+    function displayQueryTree(treeData, target, message){
         console.log(treeData);
         if (message != ""){
-            $("#queryTreeContainer").append('<h2>' + message + '</h2>');
+            $(target).append('<h2>' + message + '</h2>');
         }
         var margin = {top: 40, right: 120, bottom: 20, left: 120},
             width = 960 - margin.right - margin.left,
             height = 700 - margin.top - margin.bottom;
-            
+
         var i = 0;
         var tree = d3.layout.tree()
             .size([height, width]);
         var diagonal = d3.svg.diagonal()
             .projection(function(d) { return [d.x, d.y]; });
-        var svg = d3.select("#queryTreeContainer").append("svg")
+        var svg = d3.select(target).append("svg")
             .attr("width", width + margin.right + margin.left)
             .attr("height", height + margin.top + margin.bottom)
           .append("g")
             .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
-        root = treeData[0];  
+        root = treeData[0];
         update(root);
-        
+
         function update(source) {
           // Compute the new tree layout.
           var nodes = tree.nodes(root).reverse(),
@@ -527,13 +611,13 @@
           // Enter the nodes.
           var nodeEnter = node.enter().append("g")
               .attr("class", "node")
-              .attr("transform", function(d) { 
+              .attr("transform", function(d) {
                   return "translate(" + d.x + "," + d.y + ")"; });
           nodeEnter.append("circle")
               .attr("r", 10)
               .style("fill", "#fff");
           nodeEnter.append("text")
-              .attr("y", function(d) { 
+              .attr("y", function(d) {
                   return d.children || d._children ? -18 : 18; })
               .attr("dy", ".35em")
               .attr("text-anchor", "middle")
@@ -548,5 +632,5 @@
               .attr("d", diagonal);
         }
     }
-    
+
 </script>
