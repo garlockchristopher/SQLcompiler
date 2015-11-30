@@ -30,6 +30,8 @@
 </body>
 </html>
 <script>
+    //init clears any existing query trees out of the div used to display them, santizes the input, and builds
+    //the initial query tree.
     function init(){
         document.getElementById("queryTreeContainer").innerHTML = "";
         var input = document.getElementById("inputSQL").value
@@ -38,6 +40,7 @@
         return treeDataWrapper(input);
     }
     
+    //Displays initial query tree when user presses "parseSql" button
     document.getElementById("parseSql").onclick=function(){
         treeData = init();
         if(treeData.length == undefined){
@@ -53,31 +56,75 @@
         }
     }
     
+    //displays the input after the first optimization is made
     document.getElementById("opt1").onclick=function(){
         treeData = init();
-        treeData = moveSelectDown(treeData);
-        treeData = combineAdjacentSelects(treeData);
-        displayQueryTree([treeData], "After moving SELECT operations down the tree:");
+        if(treeData.length == undefined){
+            treeData = moveSelectDown(treeData);
+            treeData = combineAdjacentSelects(treeData);
+            displayQueryTree([treeData], "After moving SELECT operations down the tree:");
+        } else {
+            for (tree in treeData){
+                treeData[tree] = moveSelectDown(treeData[tree]);
+                treeData[tree] = combineAdjacentSelects(treeData[tree]);
+                if (tree == 0){
+                    displayQueryTree([treeData[tree]], "After moving SELECT operations down the tree:");
+                } else {
+                    displayQueryTree([treeData[tree]], "");
+                }
+            }
+        }
     }
     
+    //displays the input after the second optimization is made
     document.getElementById("opt2").onclick=function(){
         treeData = init();
-        treeData = moveSelectDown(treeData);
-        treeData = combineAdjacentSelects(treeData);
-        treeData = combineSelectCartesian(treeData);
-        displayQueryTree([treeData], "After combining SELECT followed by CARTESIAN PRODUCT into JOIN:");
+        if(treeData.length == undefined){
+            treeData = moveSelectDown(treeData);
+            treeData = combineAdjacentSelects(treeData);
+            treeData = combineSelectCartesian(treeData);
+            displayQueryTree([treeData], "After combining SELECT followed by CARTESIAN PRODUCT into JOIN:");
+        } else {
+            for (tree in treeData){
+                treeData[tree] = moveSelectDown(treeData[tree]);
+                treeData[tree] = combineAdjacentSelects(treeData[tree]);
+                treeData[tree] = combineSelectCartesian(treeData[tree]);
+                if (tree == 0){
+                    displayQueryTree([treeData[tree]], "After combining SELECT followed by CARTESIAN PRODUCT into JOIN:");
+                } else {
+                    displayQueryTree([treeData[tree]], "");
+                }
+            }
+        }
     }
     
+    //Displays the input after the 3rd optimiaztion is made
     document.getElementById("opt3").onclick=function(){
         treeData = init();
-        treeData = moveSelectDown(treeData);
-        treeData = combineAdjacentSelects(treeData);
-        treeData = combineSelectCartesian(treeData);
-        treeData = moveProjectDown(treeData, {});
-        displayQueryTree([treeData], "After moving PROJECT operations down the tree:");
+        if(treeData.length == undefined){
+            treeData = moveSelectDown(treeData);
+            treeData = combineAdjacentSelects(treeData);
+            treeData = combineSelectCartesian(treeData);
+            treeData = moveProjectDown(treeData);
+            displayQueryTree([treeData], "After combining SELECT followed by CARTESIAN PRODUCT into JOIN:");
+        } else {
+            for (tree in treeData){
+                treeData[tree] = moveSelectDown(treeData[tree]);
+                treeData[tree] = combineAdjacentSelects(treeData[tree]);
+                treeData[tree] = combineSelectCartesian(treeData[tree]);
+                treeData[tree] = moveProjectDown(treeData[tree]);
+                if (tree == 0){
+                    displayQueryTree([treeData[tree]], "After moving PROJECT operations down the tree:");
+                } else {
+                    displayQueryTree([treeData[tree]], "After moving PROJECT operations down the tree:");
+                }
+            }
+        }
     }
 
+    //Combines cartesian product statements followed by select statements into a single join
     function combineSelectCartesian(treeData){
+        console.log(treeData);
         if(treeData.type == "where" && treeData.children[0].type == "cartesianProduct"){
             var combined = {
                 "name": "JOIN(" + treeData.where.text + ")",
@@ -101,6 +148,8 @@
         return treeData;
     }
     
+    //recurses down the tree and compiles a list of which columns will be used for each table, when it reaches a table
+    //this function inserts a project statement extracting only the nessesary columns from that table.
     function moveProjectDown(treeData, projectData){
         if(treeData.type == undefined){
             treeData[0] = moveProjectDown(treeData[0], projectData)
@@ -194,9 +243,10 @@
             }
         }
         return treeData;
-    
     }
     
+    //recurses down the tree and moves select statements as far down as they can go while still maintaining
+    //equivalence to the original query
     function moveSelectDown(treeData){
         if(treeData.type == undefined){
             treeData[0] = moveSelectDown(treeData[0]);
@@ -215,6 +265,8 @@
         return treeData;
     }
     
+    //This function is to be called after moveSelectDown(), in the case where there are two select statments in a row,
+    //it will combine the two into one node.
     function combineAdjacentSelects(treeData){
         if(treeData.type == "where" && treeData.children[0].type == "where"){
             var tables = treeData.where.tables;
@@ -245,6 +297,8 @@
         return treeData;
     }
 
+    //A helper function for moveSelectDown, to be called on one individual select statment
+    // ie: an operator and two parameters
     function moveSingleSelect(select, treeData){
       if(treeData.children == undefined){
         //insert select here
@@ -277,6 +331,8 @@
       }
     }
 
+    //given a select statement and a position in the query tree, this fucntion will return true if
+    //all of the tables needed by the select statment are lower than that node in the tree
     function hasRootTables(select, rootTables){
       for (i in select.tables){
         var temp = false;
@@ -292,6 +348,7 @@
       return true;
     }
 
+    //returns a list of individual select statments which were originally seperated by AND's 
     function splitWhere(where){
       var selects = []
       if (where.operator != "AND"){
@@ -310,6 +367,7 @@
       }
     }
 
+    //returns the tables involved in a where statement
     function getTables(where){
       var tables = [];
       if (where.left.table != undefined){
@@ -321,6 +379,7 @@
       return tables;
     }
     
+    //returns the columns involved in a where statement
     function getColumns(where){
         var columns = [];
         if (where.left.column != undefined){
@@ -332,6 +391,7 @@
         return columns;
     }
 
+    //returns the tables lower than the the point in the tree this was called with.
     function getRootTables(treeData){
         var tables = [];
         if(treeData.type == "table"){
@@ -350,7 +410,9 @@
         }
         return tables;
     }
-
+    
+    //Checks and handles an input for set operators, and calls the parser to get abstract syntax trees for
+    //the input
     function treeDataWrapper(input){
         var querys = [];
         var setOperator = null;
@@ -403,6 +465,7 @@
         return retTree;
     }
 
+    //returns the treeData object, given an abstract syntax tree
     function getTreeData(ast){
         var tables = treeTables(ast.from);
         var groupBy = treeGroup(ast.groupby);
@@ -435,7 +498,7 @@
                 //TODO: get parameters for natural join here
                 var join = {
                     "name": "NATURAL JOIN",
-                    "type": "join",
+                    "type": "naturalJoin",
                 }
                 join.children = [tables, subqueryTree];
                 var treeData = project;
@@ -465,7 +528,9 @@
         }
         return treeData;
     }
-
+    
+    //detects for set operators in the input, and handles them appropriatly. Returns a relational algebra expression
+    //which is equivalent to the input SQL
     function relAlgWrapper(input){
         var querys = [];
         var setOperator = null;
@@ -505,7 +570,8 @@
         }
         return retStr;
     }
-
+    
+    //helper function for relAlgWrapper. builds a relational algebra expression for a query without set operators
     function buildRelAlg(ast){
         var tables = RAtables(ast.from);
         var project = RAproject(ast.columns);
@@ -546,7 +612,9 @@
         }
         return retStr;
     }
-
+    
+    // parses the 'FROM' part of the SQL and returns a relational algebra expression of those tables and the 
+    // cartesian product operator
     function RAtables(from){
         var retStr = ""
         for (key in from){
@@ -562,7 +630,8 @@
         if (retStr[0] != '('){retStr = '(' + retStr + ')';}
         return retStr;
     }
-
+    
+    // parses the 'FROM' part of the SQL and returns the equivalent part of the query tree
     function treeTables(from){
         if(from.length == 1){
             tableTree = {
@@ -628,6 +697,7 @@
         return tableTree;
     }
 
+    //parses the 'SELECT' part of an SQL statement and returns the equivalent relational algebra project statement
     function RAproject(columns){
         var retStr = "";
         if (columns == '*'){
@@ -664,6 +734,7 @@
         return retStr;
     }
 
+    //creates the project node from the select portion of an SQL statement
     function treeProject(columns){
         var temp = RAproject(columns);
         if (temp == '*'){return null}
@@ -674,6 +745,7 @@
         }
     }
 
+    //gets relational algebra for a 'GROUP BY' statement in SQL
     function RAgroup(groupby){
         var retStr = ""
         for(key in groupby){
@@ -683,6 +755,7 @@
         return retStr;
     }
 
+    //gets the query tree equivalent to a 'GROUP BY' statement in SQL
     function treeGroup(groupby){
         var temp = RAgroup(groupby)
         if (temp != ""){
@@ -696,6 +769,7 @@
         return null;
     }
 
+    //Gets the relational algebra expression equivalent to an SQL having 
     function RAhaving(having){
         retStr = "";
         if (having.left && having.right && having.operator){
@@ -712,6 +786,7 @@
         return retStr;
     }
 
+    //Returns the portion of the query tree equivalent to an SQL having statement
     function treeHaving(having){
         if (having == null){return null;}
         return {
@@ -722,6 +797,7 @@
         }
     }
 
+    //Returns the relational algebra select statement equivalent to an SQL where statement
     function RAwhere(where){
         retStr = ""
         if (where.left && where.right && where.operator){
@@ -738,6 +814,7 @@
         return retStr;
     }
 
+    //returns the portion of the query tree equivalent to an SQL where statement
     function treeWhere(where){
         temp = RAwhere(where);
         if (temp == ""){return null;}
@@ -771,6 +848,7 @@
         return subquery;
     }
 
+    //displays the query tree and message passed to the #queryTreeContainer div
     function displayQueryTree(treeData, message){
         console.log(treeData);
         if (message != ""){
@@ -778,7 +856,7 @@
         }
         var margin = {top: 40, right: 120, bottom: 20, left: 120},
             width = 960 - margin.right - margin.left,
-            height = 700 - margin.top - margin.bottom;
+            height = 1000 - margin.top - margin.bottom;
 
         var i = 0;
         var tree = d3.layout.tree()
