@@ -19,7 +19,10 @@
     <h1>SQL COMPILER</h1>
     <textarea rows="10" cols="80" id="inputSQL">Enter SQL Query here.</textarea>
     <br>
-    <button id="parseSql">Compile</button>
+    <button id="parseSql">Initial Tree</button>
+    <button id="opt1">Optimization 1</button>
+    <button id="opt2">Optimization 2</button>
+    <button id="opt3">Optimization 3</button>
     <br>
     <p id="relAlg">Relational Algebra will be output here.</p>
     <div id="queryTreeContainer"></div>
@@ -27,34 +30,51 @@
 </body>
 </html>
 <script>
-    document.getElementById("parseSql").onclick=function(){
+    function init(){
+        document.getElementById("queryTreeContainer").innerHTML = "";
         var input = document.getElementById("inputSQL").value
-        // replace unicode single quote with normal quotes
-
         input = input.replace(/[\u2019\u2018]/g,'"');
         document.getElementById("relAlg").innerHTML = relAlgWrapper(input);
-
-        var treeData = treeDataWrapper(input);
-        document.getElementById("queryTreeContainer").innerHTML = "";
+        return treeDataWrapper(input);
+    }
+    
+    document.getElementById("parseSql").onclick=function(){
+        treeData = init();
         if(treeData.length == undefined){
-            //displayQueryTree([treeData], "#queryTreeContainer", "Initial Query Tree:");
+            displayQueryTree([treeData], "Initial Query Tree:");
         } else {
             for (tree in treeData){
                 if (tree == 0){
-                    displayQueryTree([treeData[tree]], "#queryTreeContainer", "Initial Query Trees:");
+                    displayQueryTree([treeData[tree]], "Initial Query Trees:");
                 } else {
-                    displayQueryTree([treeData[tree]], "#queryTreeContainer", "");
+                    displayQueryTree([treeData[tree]], "");
                 }
             }
         }
+    }
+    
+    document.getElementById("opt1").onclick=function(){
+        treeData = init();
         treeData = moveSelectDown(treeData);
         treeData = combineAdjacentSelects(treeData);
-        //PRINT
+        displayQueryTree([treeData], "After moving SELECT operations down the tree:");
+    }
+    
+    document.getElementById("opt2").onclick=function(){
+        treeData = init();
+        treeData = moveSelectDown(treeData);
+        treeData = combineAdjacentSelects(treeData);
         treeData = combineSelectCartesian(treeData);
-        //PRINT
+        displayQueryTree([treeData], "After combining SELECT followed by CARTESIAN PRODUCT into JOIN:");
+    }
+    
+    document.getElementById("opt3").onclick=function(){
+        treeData = init();
+        treeData = moveSelectDown(treeData);
+        treeData = combineAdjacentSelects(treeData);
+        treeData = combineSelectCartesian(treeData);
         treeData = moveProjectDown(treeData, {});
-        document.getElementById("optimizedTreeContainer").innerHTML = "";
-        displayQueryTree([treeData], "#optimizedTreeContainer", "After moving SELECT operations down the tree:");
+        displayQueryTree([treeData], "After moving PROJECT operations down the tree:");
     }
 
     function combineSelectCartesian(treeData){
@@ -751,10 +771,10 @@
         return subquery;
     }
 
-    function displayQueryTree(treeData, target, message){
+    function displayQueryTree(treeData, message){
         console.log(treeData);
         if (message != ""){
-            $(target).append('<h2>' + message + '</h2>');
+            $("#queryTreeContainer").append('<h2>' + message + '</h2>');
         }
         var margin = {top: 40, right: 120, bottom: 20, left: 120},
             width = 960 - margin.right - margin.left,
@@ -765,7 +785,7 @@
             .size([height, width]);
         var diagonal = d3.svg.diagonal()
             .projection(function(d) { return [d.x, d.y]; });
-        var svg = d3.select(target).append("svg")
+        var svg = d3.select("#queryTreeContainer").append("svg")
             .attr("width", width + margin.right + margin.left)
             .attr("height", height + margin.top + margin.bottom)
           .append("g")
