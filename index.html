@@ -45,14 +45,138 @@
                 } else {
                     displayQueryTree([treeData[tree]], "#queryTreeContainer", "");
                 }
-
             }
         }
         treeData = moveSelectDown(treeData);
-        document.getElementById("queryTreeContainer").innerHTML = "";
+        treeData = combineAdjacentSelects(treeData);
+        //PRINT
+        treeData = combineSelectCartesian(treeData);
+        //PRINT
+        treeData = moveProjectDown(treeData, {});
+        document.getElementById("optimizedTreeContainer").innerHTML = "";
         displayQueryTree([treeData], "#optimizedTreeContainer", "After moving SELECT operations down the tree:");
     }
 
+    function combineSelectCartesian(treeData){
+        if(treeData.type == "where" && treeData.children[0].type == "cartesianProduct"){
+            var combined = {
+                "name": "JOIN(" + treeData.where.text + ")",
+                "type": "join",
+                "children": treeData.children[0].children,
+                "where": {
+                    "text": treeData.where.text,
+                    "tables": treeData.where.tables,
+                    "columns": treeData.where.columns
+                }
+            }
+            treeData = combined;
+            for(key in treeData.children){
+                treeData.children[key] = combineSelectCartesian(treeData.children[key]);
+            }
+        } else {
+            for(key in treeData.children){
+                treeData.children[key] = combineSelectCartesian(treeData.children[key]);
+            }
+        }
+        return treeData;
+    }
+    
+    function moveProjectDown(treeData, projectData){
+        if(treeData.type == undefined){
+            treeData[0] = moveProjectDown(treeData[0], projectData)
+        } else if (treeData.type == "where" || treeData.type == "join") {
+            //add tables and columns to projectData
+            console.log("WHERE: ", treeData.where);
+            for (i in treeData.where.tables){
+                if(projectData[treeData.where.tables[i]] == undefined){
+                    projectData[treeData.where.tables[i]] = [];
+                }
+                projectData[treeData.where.tables[i]].push(treeData.where.columns[i]);
+            }
+            for(key in treeData.children){
+                treeData.children[key] = moveProjectDown(treeData.children[key], projectData);
+            }
+        } else if (treeData.type == "project"){
+            console.log("PROJECT: ", treeData.project);
+            for (i in treeData.project){
+                var temp = treeData.project[i].expr;
+                if(temp.column != undefined && temp.table != undefined){
+                    if(projectData[temp.table] == undefined){
+                        projectData[temp.table] = [];
+                    }
+                    projectData[temp.table].push(temp.column);
+                } else if(temp.args.value != undefined && temp.args.value[0].column != undefined && temp.args.value[0].table != undefined) {
+                    if(projectData[temp.args.value[0].table] == undefined){
+                        projectData[temp.args.value[0].table] = [];
+                    }
+                    projectData[temp.args.value[0].table].push(temp.args.value[0].column);
+                }
+            }
+            for(key in treeData.children){
+                treeData.children[key] = moveProjectDown(treeData.children[key], projectData);
+            }
+        } else if (treeData.type == "group"){
+            if(projectData[treeData.table] == undefined){
+                projectData[treeData.table] = [];
+            }
+            projectData[treeData.table].push(treeData.column);
+            for(key in treeData.children){
+                treeData.children[key] = moveProjectDown(treeData.children[key], projectData);
+            }
+        } else if (treeData.type == "having"){
+            for (i in treeData.tables){
+                if(projectData[treeData.tables[i]] == undefined){
+                    projectData[treeData.tables[i]] = [];
+                }
+                projectData[treeData.tables[i]].push(treeData.columns[i]);
+            }
+            for(key in treeData.children){
+                treeData.children[key] = moveProjectDown(treeData.children[key], projectData);
+            }
+        } else if (treeData.type == "table"){
+            //if table has an entry in projectData, add a project on top of it
+            console.log(projectData, treeData);
+            if(projectData[treeData.as] != undefined){
+                //add project here
+                uniqueArray = projectData[treeData.as].filter(function(item, pos, self) {
+                    return self.indexOf(item) == pos;
+                })
+                var projectStr = ""
+                for (i in uniqueArray){
+                    if(i != 0){projectStr += ", ";}
+                    projectStr += treeData.as + "." + uniqueArray[i];
+                }
+                var newNode = {
+                    "name": "PROJECT(" + projectStr + ")",
+                    "type": "project",
+                    "children": [treeData]
+                }
+                return newNode;
+            } else if (projectData[treeData.table] != undefined){
+                uniqueArray = projectData[treeData.table].filter(function(item, pos, self) {
+                    return self.indexOf(item) == pos;
+                })
+                var projectStr = ""
+                for (i in uniqueArray){
+                    if(i != 0){projectStr += ", ";}
+                    projectStr += treeData.table + "." + uniqueArray[i];
+                }
+                var newNode = {
+                    "name": "PROJECT(" + projectStr + ")",
+                    "type": "project",
+                    "children": [treeData]
+                }
+                return newNode;
+            }
+        } else {
+            for(key in treeData.children){
+                treeData.children[key] = moveProjectDown(treeData.children[key], projectData);
+            }
+        }
+        return treeData;
+    
+    }
+    
     function moveSelectDown(treeData){
         if(treeData.type == undefined){
             treeData[0] = moveSelectDown(treeData[0]);
@@ -65,9 +189,40 @@
           for (key in selects){
             treeData.children[0] = moveSingleSelect(selects[key], treeData.children[0])
           }
-
+          //remove original select statement
+          treeData = treeData.children[0];
         }
-        return treeData
+        return treeData;
+    }
+    
+    function combineAdjacentSelects(treeData){
+        if(treeData.type == "where" && treeData.children[0].type == "where"){
+            var tables = treeData.where.tables;
+            var columns = treeData.where.columns;
+            for (i in treeData.children[0].where.tables){
+                tables.push(treeData.children[0].where.tables[i]);
+                columns.push(treeData.children[0].where.columns[i]);
+            }
+            var combined = {
+                "name": "SELECT(" + treeData.where.text + " AND " + treeData.children[0].where.text + ")",
+                "type": "where",
+                "children": treeData.children[0].children,
+                "where": {
+                    "text": treeData.where.text + " AND " + treeData.children[0].where.text,
+                    "tables": tables,
+                    "columns": columns
+                }
+            }
+            treeData = combined;
+            for(key in treeData.children){
+                treeData.children[key] = combineAdjacentSelects(treeData.children[key]);
+            }
+        } else {
+            for(key in treeData.children){
+                treeData.children[key] = combineAdjacentSelects(treeData.children[key]);
+            }
+        }
+        return treeData;
     }
 
     function moveSingleSelect(select, treeData){
@@ -76,6 +231,7 @@
         var newNode = {
           "name": "SELECT(" + select.text + ')',
           "type": "where",
+          "where": select,
           "children": [treeData]
         }
         return newNode;
@@ -84,6 +240,7 @@
           var insertHere = true;
           if(hasRootTables(select, getRootTables(treeData.children[key]))){
             insertHere = false;
+            if(treeData.children[key] == undefined){key = key - 1;}
             treeData.children[key] = moveSingleSelect(select, treeData.children[key]);
             return treeData;
           }
@@ -92,6 +249,7 @@
           var newNode = {
             "name": "SELECT(" + select.text + ')',
             "type": "where",
+            "where": select,
             "children": [treeData]
           }
           return newNode;
@@ -119,7 +277,8 @@
       if (where.operator != "AND"){
         var select = {
           "text": RAwhere(where),
-          "tables": getTables(where)
+          "tables": getTables(where),
+          "columns": getColumns(where)
         }
         return [select];
       } else {
@@ -140,6 +299,17 @@
         tables.push(where.right.table);
       }
       return tables;
+    }
+    
+    function getColumns(where){
+        var columns = [];
+        if (where.left.column != undefined){
+            columns.push(where.left.column);
+        }
+        if (where.right.column != undefined){
+            columns.push(where.right.column);
+        }
+        return columns;
     }
 
     function getRootTables(treeData){
@@ -247,7 +417,7 @@
                     "name": "NATURAL JOIN",
                     "type": "join",
                 }
-                join.children = [tables, subqueryTree[0]];
+                join.children = [tables, subqueryTree];
                 var treeData = project;
                 treeData.children = [join];
             } else if (subquery.operator == "NOT EXISTS"){
@@ -498,7 +668,9 @@
         if (temp != ""){
             return {
                 "name": "GROUP BY (" + temp + ')',
-                "type":"group"
+                "type":"group",
+                "column": groupby[0].column,
+                "table": groupby[0].table
             }
         }
         return null;
@@ -524,7 +696,9 @@
         if (having == null){return null;}
         return {
             "name": "SELECT (" + RAhaving(having) + ')',
-            "type": "having"
+            "type": "having",
+            "tables": getTables(having),
+            "columns": getColumns(having)
         }
     }
 
